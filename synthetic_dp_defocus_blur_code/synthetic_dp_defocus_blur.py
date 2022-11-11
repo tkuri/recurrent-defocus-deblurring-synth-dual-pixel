@@ -15,7 +15,8 @@ v1:
 1. optimized the performance of applying the blur kernel based on precomputed
 defocus map.
 2. imported and applied estimated blur kernels from real cameras.
-
+1.デフォーカスマップの事前計算によるぼかしカーネル適用性能の最適化 最適化した。
+2. 実カメラから推定されたぼかしカーネルを取り込み、適用した。
 Email: abuolaim@eecs.yorku.ca
 """
 import cv2
@@ -45,6 +46,7 @@ def check_dir(path_):
 
 def create_seq_dir_write_img(temp_set):
     '''synthetic video dataset hierarchy. check and create direcorty for each image sequence'''
+    # 合成映像データセットの階層化。各映像シーケンスに対応したディレクトリの確認と作成。'
     dir_l_src = './dd_dp_dataset_synth_vid/'+temp_set+'_l/source/seq_'+str(seq_count).zfill(3)+'/'
     dir_r_src = './dd_dp_dataset_synth_vid/'+temp_set+'_r/source/seq_'+str(seq_count).zfill(3)+'/'
     dir_c_src = './dd_dp_dataset_synth_vid/'+temp_set+'_c/source/seq_'+str(seq_count).zfill(3)+'/'
@@ -80,7 +82,7 @@ all_dir=[ _dir for _dir in os.listdir(data_dir)
 all_dir.sort()
 
 num_depth_layers=2000 # number of discrete depth layers
-matting_ratio=1 # weight used for composing image layers in the final stage
+matting_ratio=1 # weight used for composing image layers in the final stage 最終段階で画像レイヤーを構成するために使用される重み
 
 """Max distance of SYNTHIA dataset is 5000m, we need a threshold of 250m"""
 max_scene_depth=1000 # maximum scene distance in real world, in m
@@ -117,7 +119,7 @@ for set_num in range(5):
     #Camera settings and thin lens model equations#
     ###############################################
     setting_num='set_'+str(set_num)
-    coc_max=40 #set the maximum circle of confusion size (i.e., blur kernel size)
+    coc_max=40 #set the maximum circle of confusion size (i.e., blur kernel size) 錯乱円の最大サイズを設定する
     
     camera_setting=np.load(setting_num+'.npy')
     radial_dis_set=np.load(setting_num+'_rd.npy')
@@ -126,11 +128,12 @@ for set_num in range(5):
     f_stop=camera_setting[1] #camera aperture size in f-stops
     focus_dis= camera_setting[2] #distance between lens and focal plane in mm
     
-    #distance between the lens and imaging sensor
+    #distance between the lens and imaging sensor レンズと撮像素子の距離
     lens_sensor_dis=focal_len*focus_dis/(focus_dis-focal_len)
     lens_dia=focal_len/f_stop #lens diameter in mm
     
     #thin lens model. Scale used to determine the coc size based on thin lens model
+    # 薄型レンズモデル。薄型レンズモデルから錯乱円のサイズを決定する際に使用したスケール
     coc_scale=lens_sensor_dis*lens_dia/focus_dis
     
     
@@ -163,6 +166,7 @@ for set_num in range(5):
     #################################################
     #Framework to apply synthetic defocus blur based#
     #on thin lens model and DP image formation      #
+    # 薄型レンズモデルとDP結像に基づく合成焦点ぼかしの適用フレームワーク      
     #################################################
     for _dir in all_dir:
         seq_count += 1
@@ -183,6 +187,8 @@ for set_num in range(5):
             """
             The following depth manipulation steps are for depth encoding of SYNTHIA dataset.
             There is also depth clipping in order to get more fine quantized depth intervals.
+            以下の深度操作手順は、SYNTHIAデータセットの深度エンコーディングのためのものである。
+            また、より細かく量子化された深度間隔を得るために、深度クリッピングも行っている。
             """
             depth=max_scene_depth * (depth[:,:,2] + depth[:,:,1]*256 + depth[:,:,0]*256*256) / (256*256*256 - 1)
     
@@ -203,6 +209,7 @@ for set_num in range(5):
             
             """
             Loop to quantize continuous depth map into equal depth layer intervals.
+            連続した深度マップを等しい深度レイヤー間隔に量子化するループ。
             """
             num_coc_layers=len(coc_min_max_dis)
             for i in range(num_coc_layers):
@@ -221,6 +228,9 @@ for set_num in range(5):
                         coc_size=1                
                 if coc_size < 0:
                     '''generate the blur kernel for DP views based on coc size'''
+                    # order: 3, 6, 9
+                    # cut_off: 2.5, 2.0
+                    # beta: 0.1, 0.2
                     kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2*abs(coc_size)+1, order, cut_off_factor, beta, smooth_strength)
                 else:
                     '''generate the blur kernel for DP views based on coc size'''
