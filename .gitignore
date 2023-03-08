@@ -160,4 +160,5 @@ cython_debug/
 #.idea/
 
 SYNTHIA-SF/
-dd_dp_dataset_synth_vid/
+dp_dataset*/
+SIM/
