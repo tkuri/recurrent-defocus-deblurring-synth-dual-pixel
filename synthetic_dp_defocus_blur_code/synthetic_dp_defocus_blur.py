@@ -44,33 +44,47 @@ def check_dir(path_):
             if exc.errno != errno.EEXIST:
                 raise
 
-def create_seq_dir_write_img(temp_set):
+def create_seq_dir_write_img(temp_set, output_dir='./dd_dp_dataset_synth_vid/'):
     '''synthetic video dataset hierarchy. check and create direcorty for each image sequence'''
     # 合成映像データセットの階層化。各映像シーケンスに対応したディレクトリの確認と作成。'
-    dir_l_src = './dd_dp_dataset_synth_vid/'+temp_set+'_l/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_r_src = './dd_dp_dataset_synth_vid/'+temp_set+'_r/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_c_src = './dd_dp_dataset_synth_vid/'+temp_set+'_c/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_c_trg = './dd_dp_dataset_synth_vid/'+temp_set+'_c/target/seq_'+str(seq_count).zfill(3)+'/'
+    dir_l_src = output_dir+temp_set+'_l/source/seq_'+str(seq_count).zfill(3)+'/'
+    dir_r_src = output_dir+temp_set+'_r/source/seq_'+str(seq_count).zfill(3)+'/'
+    dir_c_src = output_dir+temp_set+'_c/source/seq_'+str(seq_count).zfill(3)+'/'
+    dir_c_trg = output_dir+temp_set+'_c/target/seq_'+str(seq_count).zfill(3)+'/'
     '''uncomment the following lines in case you need to save depth map'''
-    # dir_c_trg_d = './dd_dp_dataset_synth_vid/'+temp_set+'_c/target_d/seq_'+str(seq_count).zfill(3)+'/'
+    dir_c_trg_d = output_dir+temp_set+'_c/target_d/seq_'+str(seq_count).zfill(3)+'/'
     
     check_dir(dir_l_src)
     check_dir(dir_r_src)
     check_dir(dir_c_src)
     check_dir(dir_c_trg)
-    # check_dir(dir_c_trg_d)
+    check_dir(dir_c_trg_d)
     
     '''writing output images'''
     cv2.imwrite(dir_l_src+img_name, sub_img_l)
     cv2.imwrite(dir_r_src+img_name, sub_img_r)
     cv2.imwrite(dir_c_src+img_name, sub_img_c)
     cv2.imwrite(dir_c_trg+img_name, img_rgb)
-    # cv2.imwrite(dir_c_trg_d+img_name, depth_color_map)
-    
+    cv2.imwrite(dir_c_trg_d+img_name, depth_color_map)
+
+    # depth LR
+    dir_l_src_d = output_dir+temp_set+'_l/source_d/seq_'+str(seq_count).zfill(3)+'/'
+    dir_l_src_d_color = output_dir+temp_set+'_l/source_d_color/seq_'+str(seq_count).zfill(3)+'/'
+    check_dir(dir_l_src_d)
+    check_dir(dir_l_src_d_color)
+    sub_depth_l_color=sub_depth_l/threshold_dis
+    sub_depth_l_color=cv2.applyColorMap((sub_depth_l_color*255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
+    sub_depth_l_out = sub_depth_l / max_scene_depth * (2**16-1)
+    sub_depth_l_out = np.clip(sub_depth_l_out, 0, 2**16-1)
+    cv2.imwrite(dir_l_src_d+img_name, sub_depth_l_out.astype(np.uint16))
+    cv2.imwrite(dir_l_src_d_color+img_name, sub_depth_l_color)
+
+
 parser = argparse.ArgumentParser(description='Dual-pixel based defocus blur synthesis')
 '''You can download SYNTHIA-SF dataset from: https://synthia-dataset.net/downloads/'''
 parser.add_argument('--data_dir', default='../SYNTHIA-SF/', type=str,  help='SYNTHIA-SF dataset directory')
-parser.add_argument('--radial_dis', default=False, type=bool, help='to apply radial distortion or not')
+parser.add_argument('--radial_dis', action='store_true', default=False, help='to apply radial distortion or not')
+parser.add_argument('--output_dir', default='./dp_dataset_tynthia/', type=str,  help='Output directory')
 args = parser.parse_args()
 
 ###############################################
@@ -85,8 +99,12 @@ num_depth_layers=2000 # number of discrete depth layers
 matting_ratio=1 # weight used for composing image layers in the final stage 最終段階で画像レイヤーを構成するために使用される重み
 
 """Max distance of SYNTHIA dataset is 5000m, we need a threshold of 250m"""
-max_scene_depth=1000 # maximum scene distance in real world, in m
-threshold_dis=250 #distance threshold for maximum allowed distance
+if 'SYNTHIA' in data_dir:
+    max_scene_depth=1000 # maximum scene distance in real world, in m
+    threshold_dis=250 #distance threshold for maximum allowed distance
+else:
+    max_scene_depth=10 # maximum scene distance in real world, in m
+    threshold_dis=10 #distance threshold for maximum allowed distance
 
 ###############################################
 #Butterworth Filter parameters                #
@@ -131,6 +149,15 @@ for set_num in range(5):
     #distance between the lens and imaging sensor レンズと撮像素子の距離
     lens_sensor_dis=focal_len*focus_dis/(focus_dis-focal_len)
     lens_dia=focal_len/f_stop #lens diameter in mm
+
+    # # Debug cam parameter
+    # print('set:', set_num)
+    # print('focal_len:', focal_len)
+    # print('f_stop:', f_stop)
+    # print('focus_dis:', focus_dis)
+    # print('lens_sensor_dis:', lens_sensor_dis)
+    # print('lens_dia:', lens_dia)
+    # continue
     
     #thin lens model. Scale used to determine the coc size based on thin lens model
     # 薄型レンズモデル。薄型レンズモデルから錯乱円のサイズを決定する際に使用したスケール
@@ -174,23 +201,32 @@ for set_num in range(5):
         print(dir_count,'   ',dir_name)
         order,cut_off_factor,beta = bw_para_list[dir_count%len(bw_para_list)]
         dir_count+=1
-        images_rgb = [dir_name + 'RGBLeft/' + f for f in os.listdir(dir_name + 'RGBLeft/')
-                      if f.endswith(('.jpg','.JPG', '.jpeg','.JPEG', '.png', '.PNG'))]
-        images_rgb.sort()
-        images_depth = [dir_name + 'DepthLeft/' + f for f in os.listdir(dir_name + 'DepthLeft/')
+        if 'SYNTHIA' in data_dir:
+            images_rgb = [dir_name + 'RGBLeft/' + f for f in os.listdir(dir_name + 'RGBLeft/')
                         if f.endswith(('.jpg','.JPG', '.jpeg','.JPEG', '.png', '.PNG'))]
+            images_depth = [dir_name + 'DepthLeft/' + f for f in os.listdir(dir_name + 'DepthLeft/')
+                            if f.endswith(('.jpg','.JPG', '.jpeg','.JPEG', '.png', '.PNG'))]
+        else:
+            images_rgb = [dir_name + 'polar/' + f for f in os.listdir(dir_name + 'polar/')
+                        if f.endswith(('s0_denoised.png'))]
+            images_depth = [dir_name + 'polar/' + f for f in os.listdir(dir_name + 'polar/')
+                        if f.endswith(('gtD.png'))]
+        images_rgb.sort()
         images_depth.sort()
         
         for j in range(len(images_rgb)): #read image by image (i.e., video frames)
-            img_rgb=cv2.imread(images_rgb[j],1)
-            depth=(cv2.imread(images_depth[j],1)).astype(np.float64)
+            img_rgb=cv2.imread(images_rgb[j])
+            depth=(cv2.imread(images_depth[j],-1)).astype(np.float64)
             """
             The following depth manipulation steps are for depth encoding of SYNTHIA dataset.
             There is also depth clipping in order to get more fine quantized depth intervals.
             以下の深度操作手順は、SYNTHIAデータセットの深度エンコーディングのためのものである。
             また、より細かく量子化された深度間隔を得るために、深度クリッピングも行っている。
             """
-            depth=max_scene_depth * (depth[:,:,2] + depth[:,:,1]*256 + depth[:,:,0]*256*256) / (256*256*256 - 1)
+            if 'SYNTHIA' in data_dir:
+                depth=max_scene_depth * (depth[:,:,2] + depth[:,:,1]*256 + depth[:,:,0]*256*256) / (256*256*256 - 1)
+            else:
+                depth=max_scene_depth * depth[:,:,0] / (2**16-1)
     
             depth=np.where((depth>threshold_dis),threshold_dis,depth)
             
@@ -204,6 +240,8 @@ for set_num in range(5):
             sub_imgs_r=[]
             sub_imgs_c=[]
             depth_set=[]
+
+            sub_depths_l=[]
             
             img_name=images_rgb[j].split('/')[-1] #extract image name from path
             
@@ -246,7 +284,12 @@ for set_num in range(5):
                 sub_imgs_l.append(sub_img_l)
                 sub_imgs_r.append(sub_img_r)
                 sub_imgs_c.append(sub_img_c)
-            
+
+                # Depth LR
+                sub_depth_value=(depth.astype(np.float16)*sub_depth_matt)
+                sub_depth_l = cv2.filter2D(sub_depth_value[:,:,0],-1,kernel_l)
+                sub_depths_l.append(sub_depth_l)
+
             """
             Composing image layers. This step can be done in the above loop, but it is
             separated here for developing and debugging purposes.
@@ -254,20 +297,27 @@ for set_num in range(5):
             sub_img_l=sub_imgs_l[num_coc_layers-1]*depth_set[num_coc_layers-1]
             sub_img_r=sub_imgs_r[num_coc_layers-1]*depth_set[num_coc_layers-1]
             sub_img_c=sub_imgs_c[num_coc_layers-1]*depth_set[num_coc_layers-1]
+            sub_depth_l=sub_depths_l[num_coc_layers-1]*depth_set[num_coc_layers-1][:,:,0]
             for i in range(num_coc_layers-1):
                 sub_img_l+=sub_imgs_l[num_coc_layers-2-i]*depth_set[num_coc_layers-2-i]
                 sub_img_r+=sub_imgs_r[num_coc_layers-2-i]*depth_set[num_coc_layers-2-i]
                 sub_img_c+=sub_imgs_c[num_coc_layers-2-i]*depth_set[num_coc_layers-2-i]
+                sub_depth_l+=sub_depths_l[num_coc_layers-2-i]*depth_set[num_coc_layers-2-i][:,:,0]
+            # print(sub_depth_l)
+
             
             if radial_dis:
+                print('aaa')
                 sub_img_l= apply_radial_distortion(sub_img_l,radial_dis_set)
                 sub_img_r= apply_radial_distortion(sub_img_r,radial_dis_set)
                 sub_img_c= apply_radial_distortion(sub_img_c,radial_dis_set)
+                sub_depth_l= apply_radial_distortion(sub_depth_l,radial_dis_set)
                 img_rgb= apply_radial_distortion(img_rgb,radial_dis_set)
                 depth_color_map= apply_radial_distortion(depth_color_map,radial_dis_set)
+            # print(sub_depth_l)
             
             if dir_count == 3:
-                create_seq_dir_write_img('val')
-                create_seq_dir_write_img('test')
+                create_seq_dir_write_img('val', args.output_dir)
+                create_seq_dir_write_img('test', args.output_dir)
             else:
-                create_seq_dir_write_img('train')
+                create_seq_dir_write_img('train', args.output_dir)
