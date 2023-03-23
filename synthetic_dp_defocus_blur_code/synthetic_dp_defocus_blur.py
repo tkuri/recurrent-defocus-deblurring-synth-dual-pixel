@@ -47,44 +47,34 @@ def check_dir(path_):
 def create_seq_dir_write_img(temp_set, output_dir='./dd_dp_dataset_synth_vid/'):
     '''synthetic video dataset hierarchy. check and create direcorty for each image sequence'''
     # 合成映像データセットの階層化。各映像シーケンスに対応したディレクトリの確認と作成。'
-    dir_l_src = output_dir+temp_set+'_l/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_r_src = output_dir+temp_set+'_r/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_c_src = output_dir+temp_set+'_c/source/seq_'+str(seq_count).zfill(3)+'/'
-    dir_c_trg = output_dir+temp_set+'_c/target/seq_'+str(seq_count).zfill(3)+'/'
-    '''uncomment the following lines in case you need to save depth map'''
-    dir_c_trg_d = output_dir+temp_set+'_c/target_d/seq_'+str(seq_count).zfill(3)+'/'
+
+    out_dir = output_dir+temp_set+'/'
     
-    check_dir(dir_l_src)
-    check_dir(dir_r_src)
-    check_dir(dir_c_src)
-    check_dir(dir_c_trg)
-    check_dir(dir_c_trg_d)
+    check_dir(out_dir)
     
     '''writing output images'''
-    cv2.imwrite(dir_l_src+img_name, sub_img_l)
-    cv2.imwrite(dir_r_src+img_name, sub_img_r)
-    cv2.imwrite(dir_c_src+img_name, sub_img_c)
-    cv2.imwrite(dir_c_trg+img_name, img_rgb)
-    cv2.imwrite(dir_c_trg_d+img_name, depth_color_map)
+    basename, ext = os.path.splitext(img_name)
+
+    cv2.imwrite(out_dir+basename+'_l'+ext, sub_img_l)
+    cv2.imwrite(out_dir+basename+'_r'+ext, sub_img_r)
+    cv2.imwrite(out_dir+basename+'_c'+ext, sub_img_c)
+    cv2.imwrite(out_dir+basename+'_ct'+ext, img_rgb)
+    cv2.imwrite(out_dir+basename+'_ctd'+ext, depth_color_map)
 
     # depth LR
-    dir_l_src_d = output_dir+temp_set+'_l/source_d/seq_'+str(seq_count).zfill(3)+'/'
-    dir_l_src_d_color = output_dir+temp_set+'_l/source_d_color/seq_'+str(seq_count).zfill(3)+'/'
-    check_dir(dir_l_src_d)
-    check_dir(dir_l_src_d_color)
     sub_depth_l_color=sub_depth_l/threshold_dis
     sub_depth_l_color=cv2.applyColorMap((sub_depth_l_color*255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
     sub_depth_l_out = sub_depth_l / max_scene_depth * (2**16-1)
     sub_depth_l_out = np.clip(sub_depth_l_out, 0, 2**16-1)
-    cv2.imwrite(dir_l_src_d+img_name, sub_depth_l_out.astype(np.uint16))
-    cv2.imwrite(dir_l_src_d_color+img_name, sub_depth_l_color)
+    cv2.imwrite(out_dir+basename+'_ld'+ext, sub_depth_l_out.astype(np.uint16))
+    cv2.imwrite(out_dir+basename+'_ldc'+ext, sub_depth_l_color)
 
 
 parser = argparse.ArgumentParser(description='Dual-pixel based defocus blur synthesis')
 '''You can download SYNTHIA-SF dataset from: https://synthia-dataset.net/downloads/'''
-parser.add_argument('--data_dir', default='../SYNTHIA-SF/', type=str,  help='SYNTHIA-SF dataset directory')
+parser.add_argument('--data_dir', '-d', default='./Chart/', type=str,  help='Dataset directory')
 parser.add_argument('--radial_dis', action='store_true', default=False, help='to apply radial distortion or not')
-parser.add_argument('--output_dir', default='./dp_dataset_tynthia/', type=str,  help='Output directory')
+parser.add_argument('--output_dir', '-o', default='./dp_dataset_sim/', type=str,  help='Output directory')
 args = parser.parse_args()
 
 ###############################################
@@ -131,16 +121,18 @@ else:
     post_set='_bw'
 
 seq_count = 0
-for set_num in range(5):
+# for set_name in ['canon', 'fujinonF16']:
+for set_name in ['canon']:
+# for set_name in ['fujinonF16']:
     dir_count = 0 # directory count, each directory represents an image sequence
     ###############################################
     #Camera settings and thin lens model equations#
     ###############################################
-    setting_num='set_'+str(set_num)
+    setting_num='set_'+str(set_name)
     coc_max=40 #set the maximum circle of confusion size (i.e., blur kernel size) 錯乱円の最大サイズを設定する
     
     camera_setting=np.load(setting_num+'.npy')
-    radial_dis_set=np.load(setting_num+'_rd.npy')
+    # radial_dis_set=np.load(setting_num+'_rd.npy')
     
     focal_len=camera_setting[0] #camera focal length in mm
     f_stop=camera_setting[1] #camera aperture size in f-stops
@@ -151,17 +143,18 @@ for set_num in range(5):
     lens_dia=focal_len/f_stop #lens diameter in mm
 
     # # Debug cam parameter
-    # print('set:', set_num)
-    # print('focal_len:', focal_len)
-    # print('f_stop:', f_stop)
-    # print('focus_dis:', focus_dis)
-    # print('lens_sensor_dis:', lens_sensor_dis)
-    # print('lens_dia:', lens_dia)
+    print('set:', set_name)
+    print('focal_len:', focal_len)
+    print('f_stop:', f_stop)
+    print('focus_dis:', focus_dis)
+    print('lens_sensor_dis:', lens_sensor_dis)
+    print('lens_dia:', lens_dia)
     # continue
     
     #thin lens model. Scale used to determine the coc size based on thin lens model
     # 薄型レンズモデル。薄型レンズモデルから錯乱円のサイズを決定する際に使用したスケール
     coc_scale=lens_sensor_dis*lens_dia/focus_dis
+    print('coc_scale:', coc_scale)
     
     
     ###############################################
@@ -175,7 +168,10 @@ for set_num in range(5):
         sub_dis=(min_dis+(max_dis-min_dis)/2)
         
         #calculate coc size based on thin lens model
-        coc_size=round(coc_scale*(sub_dis-focus_dis)/sub_dis)
+        # coc_size=round(coc_scale*(sub_dis-focus_dis)/sub_dis)
+        coc_size = coc_scale*(sub_dis*1000-focus_dis)/(sub_dis*1000)
+        # print('i:',i, 'sub_dis:',sub_dis, 'coc_size:', coc_size)
+        coc_size=round(coc_size)
         if abs(coc_size) > coc_max:
             coc_size=np.sign(coc_size)*coc_max
         if i > 0:
@@ -200,21 +196,31 @@ for set_num in range(5):
         dir_name=data_dir+_dir + '/'
         print(dir_count,'   ',dir_name)
         order,cut_off_factor,beta = bw_para_list[dir_count%len(bw_para_list)]
+        print('order:', order, ', cut_off_factor:', cut_off_factor, ', beta:', beta)
         dir_count+=1
         if 'SYNTHIA' in data_dir:
             images_rgb = [dir_name + 'RGBLeft/' + f for f in os.listdir(dir_name + 'RGBLeft/')
                         if f.endswith(('.jpg','.JPG', '.jpeg','.JPEG', '.png', '.PNG'))]
             images_depth = [dir_name + 'DepthLeft/' + f for f in os.listdir(dir_name + 'DepthLeft/')
                             if f.endswith(('.jpg','.JPG', '.jpeg','.JPEG', '.png', '.PNG'))]
-        else:
+        elif 'SIM' in data_dir:
             images_rgb = [dir_name + 'polar/' + f for f in os.listdir(dir_name + 'polar/')
                         if f.endswith(('s0_denoised.png'))]
             images_depth = [dir_name + 'polar/' + f for f in os.listdir(dir_name + 'polar/')
                         if f.endswith(('gtD.png'))]
+        else:
+            images_rgb = [dir_name + '/' + f for f in os.listdir(dir_name + '/')
+                        if f.endswith(('s0.png'))]
+            images_depth = [dir_name + '/' + f for f in os.listdir(dir_name + '/')
+                        if f.endswith(('gtD.png'))]
+            # dis = 120
+            # images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
+            # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
         images_rgb.sort()
         images_depth.sort()
         
         for j in range(len(images_rgb)): #read image by image (i.e., video frames)
+            print(images_rgb[j])
             img_rgb=cv2.imread(images_rgb[j])
             depth=(cv2.imread(images_depth[j],-1)).astype(np.float64)
             """
@@ -226,9 +232,11 @@ for set_num in range(5):
             if 'SYNTHIA' in data_dir:
                 depth=max_scene_depth * (depth[:,:,2] + depth[:,:,1]*256 + depth[:,:,0]*256*256) / (256*256*256 - 1)
             else:
-                depth=max_scene_depth * depth[:,:,0] / (2**16-1)
+                depth=max_scene_depth * ((2**16 - 1) - depth[:,:,0]) / (2**16)
     
             depth=np.where((depth>threshold_dis),threshold_dis,depth)
+
+            print('depth_min:', np.min(depth))
             
             depth_color_map=depth/threshold_dis
             depth_color_map=cv2.applyColorMap((depth_color_map*255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
@@ -254,6 +262,8 @@ for set_num in range(5):
                 coc_size=coc_min_max_dis[i][0]
                 min_dis=coc_min_max_dis[i][1]
                 max_dis=coc_min_max_dis[i][2]
+
+                print('coc_size:', coc_size, 'min_dis:', min_dis, 'max_dis:', max_dis)
                                 
                 sub_depth=(np.where((depth >= min_dis) & (depth < max_dis), 1, 0)).astype(np.uint8)
                 sub_depth_matt=np.where((depth >= min_dis) & (depth < max_dis), 1, matting_ratio)
@@ -263,23 +273,26 @@ for set_num in range(5):
                 depth_set.append(sub_depth)
 
                 if coc_size == 0:
-                        coc_size=1                
-                if coc_size < 0:
-                    '''generate the blur kernel for DP views based on coc size'''
-                    # order: 3, 6, 9
-                    # cut_off: 2.5, 2.0
-                    # beta: 0.1, 0.2
-                    kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2*abs(coc_size)+1, order, cut_off_factor, beta, smooth_strength)
+                    sub_img_l = sub_img
+                    sub_img_r = sub_img
+                    sub_img_c = sub_img
                 else:
-                    '''generate the blur kernel for DP views based on coc size'''
-                    kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(2*abs(coc_size)+1, order, cut_off_factor, beta, smooth_strength)
+                    if coc_size < 0:
+                        '''generate the blur kernel for DP views based on coc size'''
+                        # order: 3, 6, 9
+                        # cut_off: 2.5, 2.0
+                        # beta: 0.1, 0.2
+                        kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2*abs(coc_size)+1, order, cut_off_factor, beta, smooth_strength)
+                    else:
+                        '''generate the blur kernel for DP views based on coc size'''
+                        kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(2*abs(coc_size)+1, order, cut_off_factor, beta, smooth_strength)
         
-                '''synthesize DP left view. Convolve subimage with predefined kernel'''
-                sub_img_l= cv2.filter2D(sub_img,-1,kernel_l)
-                '''synthesize DP right view. Convolve subimage with predefined kernel'''
-                sub_img_r= cv2.filter2D(sub_img,-1,kernel_r)
-                '''combined final output image'''
-                sub_img_c= cv2.filter2D(sub_img,-1,kernel_c)
+                    '''synthesize DP left view. Convolve subimage with predefined kernel'''
+                    sub_img_l= cv2.filter2D(sub_img,-1,kernel_l)
+                    '''synthesize DP right view. Convolve subimage with predefined kernel'''
+                    sub_img_r= cv2.filter2D(sub_img,-1,kernel_r)
+                    '''combined final output image'''
+                    sub_img_c= cv2.filter2D(sub_img,-1,kernel_c)
                 
                 sub_imgs_l.append(sub_img_l)
                 sub_imgs_r.append(sub_img_r)
