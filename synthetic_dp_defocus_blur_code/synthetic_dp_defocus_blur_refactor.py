@@ -207,108 +207,96 @@ def process_coc_layers(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cu
         
     return sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l
 
+def generate_sub_images(img_rgb, coc_size, sub_dis, kernel_l, kernel_r, kernel_c):
+    # 入力画像とsub_disを要素ごとに乗算し、データ型をnp.uint8に変換する
+    sub_img = (img_rgb.astype(np.float16) * sub_dis).astype(np.uint8)
+
+    # coc_sizeが0の場合、すべてのサブ画像が同じであるため、同じサブ画像を3つ返す
+    if coc_size == 0:
+        return sub_img, sub_img, sub_img
+    else:
+        # それ以外の場合、各カーネルを適用したサブ画像を返す
+        return cv2.filter2D(sub_img, -1, kernel_l), cv2.filter2D(sub_img, -1, kernel_r), cv2.filter2D(sub_img, -1, kernel_c)
 
 def process_coc_layers_blend(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength):
-    # サブ画像リストを初期化する
-    sub_imgs_l = []
-    sub_imgs_r = []
-    sub_imgs_c = []
-    # 深度セットを初期化する
-    depth_set = []
-    # サブ深度リストを初期化する
-    sub_depths_l = []
-    # カーネルリストを初期化する
-    kernels = []
-
-    # coc_size_img = coc_scale * (depth * 1000 - focus_dis) / (depth * 1000)
-
-    # coc_min_max_disの各要素に対して処理を行う
-    for i, (coc_size, min_dis, max_dis, coc_size_delta, sub_dis) in enumerate(coc_min_max_dis):
-        print('coc_size:', coc_size, 'min_dis:', min_dis, 'max_dis:', max_dis, 'coc_size_delta', coc_size_delta, 'sub_dis:', sub_dis)
-
-        sub_dis = (min_dis + (max_dis - min_dis) / 2)
-        distance_sub_dis_depth = depth - sub_dis
-
-        coc_size_prev, _, _, _, sub_dis_prev = coc_min_max_dis[max(0, i-1)]
-        coc_size_next, _, _, _, sub_dis_next = coc_min_max_dis[min(len(coc_min_max_dis) - 1, i+1)]
-        distance_sub_dis_depth_prev = depth - sub_dis_prev
-        distance_sub_dis_depth_next = depth - sub_dis_next
-
-        distance_sub_dis_depth_alt = (np.where((distance_sub_dis_depth >= 0), distance_sub_dis_depth_next, distance_sub_dis_depth_prev))
-        blend_alpha = np.abs(distance_sub_dis_depth_alt)/(np.abs(distance_sub_dis_depth)+np.abs(distance_sub_dis_depth_alt))
-
-        # 指定した範囲の深度を持つピクセルにマスクを適用する
+    # 各層のデータを処理する関数
+    def process_coc_layer(layer_data, depth, img_rgb):
+        # 各層のデータを展開
+        coc_size, min_dis, max_dis, _, sub_dis = layer_data
+        # 指定した範囲の深度を持つピクセルにマスクを適用
         sub_depth = (np.where((depth >= min_dis) & (depth < max_dis), 1, 0)).astype(np.uint8)
+        # 距離の差を計算
+        distance_sub_dis_depth = depth - sub_dis
+        # マスクを適用
         sub_depth_matt = np.where((depth >= min_dis) & (depth < max_dis), 1, matting_ratio)
+        # サブ深度値を計算
+        sub_depth_value = (depth.astype(np.float16) * sub_depth_matt)
 
-        # サブ画像を計算する
-        sub_img = (img_rgb.astype(np.float16) * sub_depth_matt).astype(np.uint8)
-        depth_set.append(sub_depth)
-
-        # coc_sizeが0の場合、サブ画像はすべて同じ
-        if coc_size == 0:
-            sub_img_l = sub_img_r = sub_img_c = sub_img
+        # カーネルを生成
+        if coc_size < 0:
+            kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2 * abs(coc_size) + 1, order, cut_off_factor, beta, smooth_strength)
         else:
-            # coc_sizeが負の場合、カーネルを生成する
-            if coc_size < 0:
-                kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2 * abs(coc_size) + 1, order, cut_off_factor, beta, smooth_strength)
-            else:
-                kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(2 * abs(coc_size) + 1, order, cut_off_factor, beta, smooth_strength)
+            kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(2 * abs(coc_size) + 1, order, cut_off_factor, beta, smooth_strength)
 
-            # カーネルを適用してサブ画像を生成する
-            sub_img_l = cv2.filter2D(sub_img, -1, kernel_l)
-            sub_img_r = cv2.filter2D(sub_img, -1, kernel_r)
-            sub_img_c = cv2.filter2D(sub_img, -1, kernel_c)
+        # サブ画像を生成
+        sub_img_l, sub_img_r, sub_img_c = generate_sub_images(img_rgb, coc_size, sub_depth_matt, kernel_l, kernel_r, kernel_c)
+        # サブ深度値にカーネルを適用
+        sub_depth_l = cv2.filter2D(sub_depth_value[:, :, 0], -1, kernel_l)
 
-        # coc_sizeが0の場合、サブ画像はすべて同じ
-        if coc_size_prev == 0:
-            sub_img_l_prev = sub_img_r_prev = sub_img_c_prev = sub_img
+        return sub_img_l, sub_img_r, sub_img_c, sub_depth, sub_depth_l, distance_sub_dis_depth
+
+    sub_images = []
+    distances = []
+
+    # 各層のデータを処理
+    for i, layer_data in enumerate(coc_min_max_dis):
+        print(layer_data)
+        sub_img_l, sub_img_r, sub_img_c, sub_depth, sub_depth_l, distance_sub_dis_depth = process_coc_layer(layer_data, depth, img_rgb)
+        sub_images.append((sub_img_l, sub_img_r, sub_img_c, sub_depth, sub_depth_l))
+        distances.append(distance_sub_dis_depth)
+
+    # ブレンド処理
+    for i, sub_img_data in enumerate(sub_images):
+        sub_img_l, sub_img_r, sub_img_c, sub_depth, sub_depth_l = sub_img_data
+        distance_sub_dis_depth = distances[i]
+
+        # 前後のサブ画像データを取得
+        if i > 0:
+            sub_img_l_prev, sub_img_r_prev, sub_img_c_prev, _, _ = sub_images[i - 1]
+            distance_sub_dis_depth_prev = distances[i - 1]
         else:
-            # coc_sizeが負の場合、カーネルを生成する
-            if coc_size_prev < 0:
-                kernel_c_prev, kernel_r_prev, kernel_l_prev = bwk.bw_kernel_generator(2 * abs(coc_size_prev) + 1, order, cut_off_factor, beta, smooth_strength)
-            else:
-                kernel_c_prev, kernel_l_prev, kernel_r_prev = bwk.bw_kernel_generator(2 * abs(coc_size_prev) + 1, order, cut_off_factor, beta, smooth_strength)
+            sub_img_l_prev, sub_img_r_prev, sub_img_c_prev = sub_img_l, sub_img_r, sub_img_c
+            distance_sub_dis_depth_prev = distance_sub_dis_depth
 
-            sub_img_l_prev = cv2.filter2D(sub_img, -1, kernel_l_prev)
-            sub_img_r_prev = cv2.filter2D(sub_img, -1, kernel_r_prev)
-            sub_img_c_prev = cv2.filter2D(sub_img, -1, kernel_c_prev)
-
-
-        # coc_sizeが0の場合、サブ画像はすべて同じ
-        if coc_size_next == 0:
-            sub_img_l_next = sub_img_r_next = sub_img_c_next = sub_img
+        if i < len(sub_images) - 1:
+            sub_img_l_next, sub_img_r_next, sub_img_c_next, _, _ = sub_images[i + 1]
+            distance_sub_dis_depth_next = distances[i + 1]
         else:
-            # coc_sizeが負の場合、カーネルを生成する
-            if coc_size_next < 0:
-                kernel_c_next, kernel_r_next, kernel_l_next = bwk.bw_kernel_generator(2 * abs(coc_size_next) + 1, order, cut_off_factor, beta, smooth_strength)
-            else:
-                kernel_c_next, kernel_l_next, kernel_r_next = bwk.bw_kernel_generator(2 * abs(coc_size_next) + 1, order, cut_off_factor, beta, smooth_strength)
+            sub_img_l_next, sub_img_r_next, sub_img_c_next = sub_img_l, sub_img_r, sub_img_c
+            distance_sub_dis_depth_next = distance_sub_dis_depth
 
-            sub_img_l_next = cv2.filter2D(sub_img, -1, kernel_l_next)
-            sub_img_r_next = cv2.filter2D(sub_img, -1, kernel_r_next)
-            sub_img_c_next = cv2.filter2D(sub_img, -1, kernel_c_next)
+        # ブレンドアルファを計算
+        distance_sub_dis_depth_alt = np.where((distance_sub_dis_depth >= 0), distance_sub_dis_depth_next, distance_sub_dis_depth_prev)
+        blend_alpha = np.abs(distance_sub_dis_depth_alt) / (np.abs(distance_sub_dis_depth) + np.abs(distance_sub_dis_depth_alt))
 
+        # 前後のサブ画像を選択
         sub_img_l_alt = np.where((distance_sub_dis_depth >= 0), sub_img_l_next, sub_img_l_prev)
         sub_img_r_alt = np.where((distance_sub_dis_depth >= 0), sub_img_r_next, sub_img_r_prev)
         sub_img_c_alt = np.where((distance_sub_dis_depth >= 0), sub_img_c_next, sub_img_c_prev)
 
+        # サブ画像をブレンド
         sub_img_l = sub_img_l * blend_alpha + sub_img_l_alt * (1.0 - blend_alpha)
         sub_img_r = sub_img_r * blend_alpha + sub_img_r_alt * (1.0 - blend_alpha)
         sub_img_c = sub_img_c * blend_alpha + sub_img_c_alt * (1.0 - blend_alpha)
 
+        sub_images[i] = sub_img_l, sub_img_r, sub_img_c, sub_depth, sub_depth_l
 
-        # サブ画像をリストに追加する
-        sub_imgs_l.append(sub_img_l)
-        sub_imgs_r.append(sub_img_r)
-        sub_imgs_c.append(sub_img_c)
+    # 結果をまとめる
+    sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = zip(*sub_images)
 
-        # サブ深度値を計算する
-        sub_depth_value = (depth.astype(np.float16) * sub_depth_matt)
-        sub_depth_l = cv2.filter2D(sub_depth_value[:, :, 0], -1, kernel_l)
-        sub_depths_l.append(sub_depth_l)
-        
     return sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l
+
+
 
 def combine_sub_images(sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l, num_coc_layers):
     sub_img_l = sub_imgs_l[num_coc_layers - 1] * depth_set[num_coc_layers - 1]
