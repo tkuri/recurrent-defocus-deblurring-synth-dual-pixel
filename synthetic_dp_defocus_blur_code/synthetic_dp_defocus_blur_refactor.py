@@ -394,7 +394,6 @@ def process_coc_layers_v2(img_rgb, depth, coc_min_max_dis, matting_ratio, order,
             sub_img_c = sub_img_c_next
 
         coc_size_integer_next, min_dis_next, max_dis_next = coc_min_max_dis[min(i+1, len(coc_min_max_dis)-1)]
-        print('coc_size_integer_next:', coc_size_integer_next)
 
         if coc_size_integer_next == 0:
             sub_img_l_next = sub_img_r_next = sub_img_c_next = sub_img
