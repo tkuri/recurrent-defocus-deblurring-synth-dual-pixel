@@ -6,6 +6,7 @@ import os
 import errno
 from wand.image import Image
 from pathlib import Path
+import time
 
 def create_arg_parser():
     parser = argparse.ArgumentParser(description='Dual-pixel based defocus blur synthesis')
@@ -74,10 +75,10 @@ def get_camera_settings(set_name):
     return focal_len, f_stop, focus_dis
 
 
-def calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha = 2.0):
+def calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha = 1.0):
     lens_sensor_dis = focal_len * focus_dis / (focus_dis - focal_len)
     lens_dia = focal_len / f_stop
-    coc_scale = lens_sensor_dis * lens_dia / focus_dis * 0.5 * coc_alpha
+    coc_scale = lens_sensor_dis * lens_dia / focus_dis * coc_alpha
     coc_max = lens_dia * lens_sensor_dis / focus_dis
     return lens_sensor_dis, lens_dia, coc_scale, coc_max
 
@@ -129,24 +130,49 @@ def compute_defocus_map_layers(num_depth_layers, threshold_dis, coc_scale, coc_m
 def convert_coc_size_to_depth(coc_size, focus_dis, lens_sensor_dis, lens_dia):
     return abs((lens_dia * lens_sensor_dis * focus_dis) / (coc_size * focus_dis - lens_dia * lens_sensor_dis))
 
-def compute_defocus_map_layers_v2(coc_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia):
+def convert_coc_size_to_depth(coc_size, coc_scale, focus_dis):
+    return (-coc_scale * focus_dis) / (coc_size - coc_scale)
+
+
+def nearest_odd_below(num):
+    int_num = int(num)
+    return int_num - 1 if int_num % 2 == 0 else int_num - 2
+
+def compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia):
     # ぼけマップのレイヤーを格納するリストを初期化する
     coc_min_max_dis = []
-    ind_count = 0
 
-    # 指定された深度レイヤー数の範囲でループする
-    for i in range(coc_min, int(coc_max+1)):
+    # coc_sizeの最小値（奇数）を計算
+    coc_min = coc_scale * (depth_min * 1000 - focus_dis) / (depth_min * 1000)
+    coc_min = nearest_odd_below(coc_min)
+
+    # 指定されたcoc_size(奇数、-1と1は0)でmin_dis, max_disを計算しておく
+    for i in range(coc_min, int(coc_max+3), 2):
+        if i==-3:
+            i_next = 0
+        elif i==-1:
+            i = 0
+            i_next = 3
+        elif i==1:
+            continue
+        else:
+            i_next = i + 2
+
         # 最小距離と最大距離を計算する
-        min_dis = convert_coc_size_to_depth(i, focus_dis, lens_sensor_dis, lens_dia)
-        if i==int(coc_max):
+        if i > coc_max:
+            min_dis = threshold_dis*1000
+        else:
+            # min_dis = convert_coc_size_to_depth(i, focus_dis, lens_sensor_dis, lens_dia)
+            min_dis = convert_coc_size_to_depth(i, coc_scale, focus_dis)
+        if i_next > coc_max:
             max_dis = threshold_dis*1000
         else:
-            max_dis = convert_coc_size_to_depth(i+1, focus_dis, lens_sensor_dis, lens_dia)
+            # max_dis = convert_coc_size_to_depth(i_next, focus_dis, lens_sensor_dis, lens_dia)
+            max_dis = convert_coc_size_to_depth(i_next, coc_scale, focus_dis)
         coc_size_integer = i
 
         # coc_min_max_disに新しい要素を追加する
         coc_min_max_dis.append([coc_size_integer, min_dis, max_dis])
-        ind_count += 1
 
     return coc_min_max_dis
 
@@ -162,11 +188,11 @@ def load_image_and_depth(image_path, depth_path, data_dir, max_scene_depth, thre
     # 深度画像を読み込む
     depth = (cv2.imread(depth_path, -1)).astype(np.float64)
 
-    # SYNTHIAデータセットの場合、深度の値を変換する
     if 'SYNTHIA' in data_dir:
         depth = max_scene_depth * (depth[:, :, 2] + depth[:, :, 1] * 256 + depth[:, :, 0] * 256 * 256) / (256 * 256 * 256 - 1)
     else:
-        # それ以外の場合、深度の値を変換する
+        # depth == 0の画素は65535にし反転する(無効領域)
+        depth = np.where((depth == 0), 2 ** 16 - 1, depth)       
         depth = max_scene_depth * ((2 ** 16 - 1) - depth[:, :, 0]) / (2 ** 16)
 
     # 深度がしきい値を超えた場合、しきい値に制限する
@@ -357,7 +383,7 @@ def process_coc_layers_v2(img_rgb, depth, coc_min_max_dis, matting_ratio, order,
 
     depth_mm = depth*1000
 
-    coc_size = coc_scale * (depth_mm - focus_dis) / depth_mm
+    coc_size = coc_scale * (depth_mm - focus_dis) / np.clip(depth_mm, 0.001, None)
 
     # coc_min_max_disの各要素に対して処理を行う
     for i, (coc_size_integer, min_dis, max_dis) in enumerate(coc_min_max_dis):
@@ -378,11 +404,10 @@ def process_coc_layers_v2(img_rgb, depth, coc_min_max_dis, matting_ratio, order,
             else:
                 # coc_sizeの符号によってカーネルl,rを反転させる
                 if coc_size_integer < 0:
-                    # kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(2 * abs(coc_size_integer) + 1, order, cut_off_factor, beta, smooth_strength)
-                    kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer)), order, cut_off_factor, beta, smooth_strength)
+                    # kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer)), order, cut_off_factor, beta, smooth_strength)
+                    kernel_c, kernel_r, kernel_l = bwk.bw_kernel_generator(abs(coc_size_integer), order, cut_off_factor, beta, smooth_strength)
                 else:
-                    # kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(2 * abs(coc_size_integer) + 1, order, cut_off_factor, beta, smooth_strength)
-                    kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer)) + 1, order, cut_off_factor, beta, smooth_strength)
+                    kernel_c, kernel_l, kernel_r = bwk.bw_kernel_generator(abs(coc_size_integer), order, cut_off_factor, beta, smooth_strength)
 
                 # カーネルを適用してサブ画像を生成する
                 sub_img_l = cv2.filter2D(sub_img, -1, kernel_l)
@@ -400,11 +425,11 @@ def process_coc_layers_v2(img_rgb, depth, coc_min_max_dis, matting_ratio, order,
         else:
             # coc_sizeの符号によってカーネルl,rを反転させる
             if coc_size_integer_next < 0:
-                # kernel_c_next, kernel_r_next, kernel_l_next = bwk.bw_kernel_generator(2 * abs(coc_size_integer_next) + 1, order, cut_off_factor, beta, smooth_strength)
-                kernel_c_next, kernel_r_next, kernel_l_next = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer_next)), order, cut_off_factor, beta, smooth_strength)
+                # kernel_c_next, kernel_r_next, kernel_l_next = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer_next)), order, cut_off_factor, beta, smooth_strength)
+                kernel_c_next, kernel_r_next, kernel_l_next = bwk.bw_kernel_generator(abs(coc_size_integer_next), order, cut_off_factor, beta, smooth_strength)
             else:
-                # kernel_c_next, kernel_l_next, kernel_r_next = bwk.bw_kernel_generator(2 * abs(coc_size_integer_next) + 1, order, cut_off_factor, beta, smooth_strength)
-                kernel_c_next, kernel_l_next, kernel_r_next = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer_next)), order, cut_off_factor, beta, smooth_strength)
+                # kernel_c_next, kernel_l_next, kernel_r_next = bwk.bw_kernel_generator(nearest_odd_integer(abs(coc_size_integer_next)), order, cut_off_factor, beta, smooth_strength)
+                kernel_c_next, kernel_l_next, kernel_r_next = bwk.bw_kernel_generator(abs(coc_size_integer_next), order, cut_off_factor, beta, smooth_strength)
 
             # カーネルを適用してサブ画像を生成する
             sub_img_l_next = cv2.filter2D(sub_img, -1, kernel_l_next)
@@ -456,9 +481,9 @@ def apply_radial_distortion_to_all(images, radial_dis_set):
     return distorted_images
 
 
-def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale):
+def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max):
     print(f'set: {set_name}\nfocal_len: {focal_len}\nf_stop: {f_stop}\nfocus_dis: {focus_dis}\n'
-          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\ncoc_scale: {coc_scale}')
+          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\ncoc_scale: {coc_scale}\ncoc_max: {coc_max}')
 
 def load_images(data_dir, dir_name):
     image_suffixes = ('.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG')
@@ -471,8 +496,8 @@ def load_images(data_dir, dir_name):
     elif 'Chart' in data_dir:
         # images_rgb = load_images_from_directory(dir_name, '', ('s0.png',))
         # images_depth = load_images_from_directory(dir_name, '', ('gtD.png',))
-        # dis = 125
-        dis = 80
+        dis = 125
+        # dis = 140
         images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
         images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
     else:
@@ -486,7 +511,7 @@ def load_images(data_dir, dir_name):
 
 
 
-def process_set_name(set_name, num_depth_layers, threshold_dis, coc_alpha, coc_min):
+def process_set_name(set_name, num_depth_layers, threshold_dis, coc_alpha, depth_min):
     # ディレクトリカウントを初期化する
     dir_count = 0
     # カメラ設定を取得する
@@ -494,10 +519,10 @@ def process_set_name(set_name, num_depth_layers, threshold_dis, coc_alpha, coc_m
     # レンズパラメータを計算する
     lens_sensor_dis, lens_dia, coc_scale, coc_max = calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha)
     # パラメータを表示する
-    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale)
+    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max)
     # ぼけマップのレイヤーを計算する
     # coc_min_max_dis = compute_defocus_map_layers(num_depth_layers, threshold_dis, coc_scale, coc_max, focus_dis)
-    coc_min_max_dis = compute_defocus_map_layers_v2(coc_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia)
+    coc_min_max_dis = compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia)
     return coc_scale, coc_max, focus_dis, coc_min_max_dis
 
 def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, threshold_dis, num_depth_layers, matting_ratio, order, cut_off_factor, beta, smooth_strength, radial_dis, output_dir, coc_min_max_dis, num_coc_layers, coc_scale, focus_dis):
@@ -506,7 +531,7 @@ def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, 
     # 画像と深度データを読み込む
     img_rgb, depth, depth_color_map = load_image_and_depth(img_rgb_path, img_depth_path, data_dir, max_scene_depth, threshold_dis)
     # 深度データの最小値を表示する
-    print('depth_min:', np.min(depth))
+    print('depth average:', np.mean(depth[np.where(depth!=0)]))
     # cocレイヤーを処理する
     # sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = process_coc_layers(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength)
     # sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = process_coc_layers_blend(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength)
@@ -528,8 +553,8 @@ def main():
     all_dir = get_directories(data_dir)
     # 深度レイヤーの数を設定する
     num_depth_layers = 2000
-    # cos_sizeのminを設定する
-    coc_min= -10
+    # depthのminを設定する[m]
+    depth_min = 0.08 # 100mm=10cm
     # マッティング比率を設定する
     matting_ratio = 1
     # 深度パラメータを取得する
@@ -549,7 +574,7 @@ def main():
 
     # セット名ごとに処理を行う
     for set_name in set_names:
-        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, num_depth_layers, threshold_dis, coc_alpha, coc_min)
+        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, num_depth_layers, threshold_dis, coc_alpha, depth_min)
         num_coc_layers = len(coc_min_max_dis)
 
         # シーケンス数とディレクトリ数を初期化する
@@ -567,7 +592,14 @@ def main():
 
             # 各画像ペアを処理する
             for j in range(len(images_rgb_path)):
+                start_time = time.time()
+
                 process_image_pair(images_rgb_path[j], images_depth_path[j], data_dir, max_scene_depth, threshold_dis, num_depth_layers, matting_ratio, order, cut_off_factor, beta, smooth_strength, radial_dis, args.output_dir, coc_min_max_dis, num_coc_layers, coc_scale, focus_dis)
+
+                end_time = time.time()
+                # 実行時間の計算
+                elapsed_time = end_time - start_time
+                print(f"time: {elapsed_time} sec")
 
 if __name__ == '__main__':
     arg_parser = create_arg_parser()
