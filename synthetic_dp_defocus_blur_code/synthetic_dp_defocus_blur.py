@@ -26,6 +26,7 @@ import generate_bw_kernel as bwk #module to generate DP blur kernels
 import os
 import errno
 from wand.image import Image
+import time
 
 def apply_radial_distortion(_temp_img,_radial_dis_set):
     with Image.from_array(_temp_img) as _img:
@@ -213,13 +214,14 @@ for set_name in ['canon']:
                         if f.endswith(('s0.png'))]
             images_depth = [dir_name + '/' + f for f in os.listdir(dir_name + '/')
                         if f.endswith(('gtD.png'))]
-            # dis = 120
-            # images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
-            # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
+            dis = 125
+            images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
+            images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
         images_rgb.sort()
         images_depth.sort()
         
         for j in range(len(images_rgb)): #read image by image (i.e., video frames)
+            start_time = time.time()
             print(images_rgb[j])
             img_rgb=cv2.imread(images_rgb[j])
             depth=(cv2.imread(images_depth[j],-1)).astype(np.float64)
@@ -334,3 +336,8 @@ for set_name in ['canon']:
                 create_seq_dir_write_img('test', args.output_dir)
             else:
                 create_seq_dir_write_img('train', args.output_dir)
+
+            end_time = time.time()
+            # 実行時間の計算
+            elapsed_time = end_time - start_time
+            print(f"time: {elapsed_time} sec")
