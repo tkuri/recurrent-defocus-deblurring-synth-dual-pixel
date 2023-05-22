@@ -100,6 +100,7 @@ def compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, 
     # coc_sizeの最小値（奇数）を計算
     coc_min = coc_scale * (depth_min - focus_dis) / depth_min
     coc_min_odd = nearest_odd_below(coc_min)
+    if coc_min_odd==-1: coc_min_odd = -3
     print('coc_min:', coc_min, 'coc_min_odd:', coc_min_odd)
 
     # 指定されたcoc_size(奇数、-1と1は0)でmin_dis, max_disを計算しておく
@@ -374,7 +375,8 @@ def main():
     # フォーカス距離を設定する
     focus_dis = args.focus_dis
     # セット名を設定する
-    set_names = ['canon']
+    # set_names = ['canon']
+    set_names = ['fujinonF16']
 
     # セット名ごとに処理を行う
     for set_name in set_names:
