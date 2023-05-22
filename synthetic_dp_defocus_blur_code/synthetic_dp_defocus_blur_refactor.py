@@ -12,6 +12,9 @@ def create_arg_parser():
     parser = argparse.ArgumentParser(description='Dual-pixel based defocus blur synthesis')
     parser.add_argument('--data_dir', '-d', default='./Chart/', type=str, help='Dataset directory')
     parser.add_argument('--radial_dis', action='store_true', default=False, help='to apply radial distortion or not')
+    parser.add_argument('--add_noise', action='store_true', default=False, help='to add noise to depth')
+    parser.add_argument('--focus_dis', '-fd', default=1250, type=float, help='focus distance [mm], if fd<0 set from param')
+    parser.add_argument('--coc_alpha', '-ca', default=1.0, type=float, help='parameter to define coc size')
     parser.add_argument('--output_dir', '-o', default='./dp_dataset_sim/', type=str, help='Output directory')
     return parser
 
@@ -39,9 +42,9 @@ def create_sequence_directory_and_save_images(img_name, temp_set, output_dir, ma
         'r': sub_img_r,
         'c': sub_img_c,
         'ct': img_rgb,
-        'ctd': depth_color_map,
-        'ld': (sub_depth_l / max_scene_depth * (2**16-1)).clip(0, 2**16-1).astype(np.uint16),
-        'ldc': cv2.applyColorMap(((sub_depth_l / threshold_dis) * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
+        # 'ctd': depth_color_map,
+        # 'ld': (sub_depth_l / max_scene_depth * (2**16-1)).clip(0, 2**16-1).astype(np.uint16),
+        # 'ldc': cv2.applyColorMap(((sub_depth_l / threshold_dis) * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS)
     }
     
     save_images(images, output_dir, basename, ext)
@@ -141,6 +144,8 @@ def load_image_and_depth(image_path, depth_path, data_dir, max_scene_depth, thre
 
     if 'SYNTHIA' in data_dir:
         depth = max_scene_depth * (depth[:, :, 2] + depth[:, :, 1] * 256 + depth[:, :, 0] * 256 * 256) / (256 * 256 * 256 - 1)
+    elif 'ICCP' in data_dir or 'Fixed' in data_dir:
+        depth = max_scene_depth * depth / (2 ** 16 - 1)
     else:
         # depth == 0の画素は65535にし反転する(無効領域)
         depth = np.where((depth == 0), 2 ** 16 - 1, depth)       
@@ -269,9 +274,9 @@ def apply_radial_distortion_to_all(images, radial_dis_set):
     return distorted_images
 
 
-def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max):
+def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max, coc_alpha):
     print(f'set: {set_name}\nfocal_len: {focal_len}\nf_stop: {f_stop}\nfocus_dis: {focus_dis}\n'
-          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\ncoc_scale: {coc_scale}\ncoc_max: {coc_max}')
+          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\ncoc_scale: {coc_scale}\ncoc_max: {coc_max}\ncoc_alpha: {coc_alpha}')
 
 def load_images(data_dir, dir_name):
     image_suffixes = ('.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG')
@@ -288,6 +293,13 @@ def load_images(data_dir, dir_name):
         # dis = 140
         # images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
         # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
+    elif 'Fixed' in data_dir:
+        images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
+        images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
+        images_rgb = images_rgb * len(images_depth)
+    elif 'ICCP' in data_dir:
+        images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
+        images_depth = load_images_from_directory(dir_name, '', ('dgt.png',))
     else:
         images_rgb = load_images_from_directory(dir_name, '', ('s0.png',))
         images_depth = load_images_from_directory(dir_name, '', ('gtD.png',))
@@ -299,23 +311,24 @@ def load_images(data_dir, dir_name):
 
 
 
-def process_set_name(set_name, threshold_dis, coc_alpha, depth_min):
+def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis):
     # ディレクトリカウントを初期化する
     dir_count = 0
     # カメラ設定を取得する
-    focal_len, f_stop, focus_dis = get_camera_settings(set_name)
-    focus_dis = 500
+    focal_len, f_stop, focus_dis_from_set = get_camera_settings(set_name)
+    if focus_dis < 0:
+        focus_dis = focus_dis_from_set
     # レンズパラメータを計算する
     lens_sensor_dis, lens_dia, coc_scale, coc_max = calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha)
     # パラメータを表示する
-    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max)
+    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max, coc_alpha)
     # ぼけマップのレイヤーを計算する
     coc_min_max_dis = compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia)
     return coc_scale, coc_max, focus_dis, coc_min_max_dis
 
 def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, threshold_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength, radial_dis, output_dir, coc_min_max_dis, coc_scale, focus_dis):
     # 画像のパスを表示する
-    print(img_rgb_path)
+    print(img_rgb_path, img_depth_path)
     # 画像と深度データを読み込む
     img_rgb, depth, depth_color_map = load_image_and_depth(img_rgb_path, img_depth_path, data_dir, max_scene_depth, threshold_dis)
     # 深度データの最小値を表示する
@@ -330,9 +343,12 @@ def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, 
     if radial_dis:
         sub_img_l, sub_img_r, sub_img_c, sub_depth_l, img_rgb, depth_color_map = apply_radial_distortion_to_all([sub_img_l, sub_img_r, sub_img_c, sub_depth_l, img_rgb, depth_color_map], radial_dis_set)
     # 画像名を取得する
-    img_name = os.path.basename(img_rgb_path)
+    if 'Fixed' in img_rgb_path:
+        img_name = os.path.basename(img_depth_path)
+    else:
+        img_name = os.path.basename(img_rgb_path)
     # シーケンスディレクトリを作成し、画像を保存する
-    create_sequence_directory_and_save_images(img_name, 'train', output_dir, max_scene_depth, threshold_dis, sub_img_l, sub_img_r, sub_img_c, sub_depth_l, img_rgb, depth_color_map)
+    create_sequence_directory_and_save_images(img_name, '', output_dir, max_scene_depth, threshold_dis, sub_img_l, sub_img_r, sub_img_c, sub_depth_l, img_rgb, depth_color_map)
 
 def main():
     # データディレクトリを設定する
@@ -354,13 +370,15 @@ def main():
     # ポストセットを設定する
     post_set = '_bw_rd' if radial_dis else '_bw'
     # cocのスケーリングパラメータを設定する
-    coc_alpha = 1.0
+    coc_alpha = args.coc_alpha
+    # フォーカス距離を設定する
+    focus_dis = args.focus_dis
     # セット名を設定する
     set_names = ['canon']
 
     # セット名ごとに処理を行う
     for set_name in set_names:
-        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min)
+        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis)
         num_coc_layers = len(coc_min_max_dis)
 
         # シーケンス数とディレクトリ数を初期化する
