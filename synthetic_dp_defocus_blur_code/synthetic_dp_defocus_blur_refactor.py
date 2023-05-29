@@ -297,8 +297,8 @@ def load_images(data_dir, dir_name):
     elif 'Fixed' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
         images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
-        dis = 140
-        images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
+        # dis = 140
+        # images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
         images_rgb = images_rgb * len(images_depth)
     elif 'ICCP' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
