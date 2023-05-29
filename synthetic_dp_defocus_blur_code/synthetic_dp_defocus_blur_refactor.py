@@ -14,6 +14,7 @@ def create_arg_parser():
     parser.add_argument('--radial_dis', action='store_true', default=False, help='to apply radial distortion or not')
     parser.add_argument('--add_noise', action='store_true', default=False, help='to add noise to depth')
     parser.add_argument('--focus_dis', '-fd', default=1250, type=float, help='focus distance [mm], if fd<0 set from param')
+    parser.add_argument('--f_stop',    '-fs', default=2.0, type=float, help='f stop (F) value, if fs<0 set from param')
     parser.add_argument('--coc_alpha', '-ca', default=1.0, type=float, help='parameter to define coc size')
     parser.add_argument('--output_dir', '-o', default='./dp_dataset_sim/', type=str, help='Output directory')
     return parser
@@ -82,7 +83,7 @@ def calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha):
     lens_sensor_dis = focal_len * focus_dis / (focus_dis - focal_len)
     lens_dia = focal_len / f_stop
     coc_scale = lens_sensor_dis * lens_dia / focus_dis * coc_alpha
-    coc_max = lens_dia * lens_sensor_dis / focus_dis
+    coc_max = coc_scale
     return lens_sensor_dis, lens_dia, coc_scale, coc_max
 
 def convert_coc_size_to_depth(coc_size, coc_scale, focus_dis):
@@ -290,13 +291,14 @@ def load_images(data_dir, dir_name):
     elif 'Chart' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('s0.png',))
         images_depth = load_images_from_directory(dir_name, '', ('gtD.png',))
-        # dis = 125
         # dis = 140
         # images_rgb = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_s0.png']
         # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
     elif 'Fixed' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
         images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
+        dis = 140
+        images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
         images_rgb = images_rgb * len(images_depth)
     elif 'ICCP' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
@@ -312,13 +314,15 @@ def load_images(data_dir, dir_name):
 
 
 
-def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis):
+def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop):
     # ディレクトリカウントを初期化する
     dir_count = 0
     # カメラ設定を取得する
-    focal_len, f_stop, focus_dis_from_set = get_camera_settings(set_name)
+    focal_len, f_stop_from_set, focus_dis_from_set = get_camera_settings(set_name)
     if focus_dis < 0:
         focus_dis = focus_dis_from_set
+    if f_stop < 0:
+        f_stop = f_stop_from_set
     # レンズパラメータを計算する
     lens_sensor_dis, lens_dia, coc_scale, coc_max = calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha)
     # パラメータを表示する
@@ -374,13 +378,15 @@ def main():
     coc_alpha = args.coc_alpha
     # フォーカス距離を設定する
     focus_dis = args.focus_dis
+    # F値を設定する
+    f_stop = args.f_stop
     # セット名を設定する
     # set_names = ['canon']
     set_names = ['fujinonF16']
 
     # セット名ごとに処理を行う
     for set_name in set_names:
-        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis)
+        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop)
         num_coc_layers = len(coc_min_max_dis)
 
         # シーケンス数とディレクトリ数を初期化する
