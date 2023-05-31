@@ -16,6 +16,7 @@ def create_arg_parser():
     parser.add_argument('--focus_dis', '-fd', default=1250, type=float, help='focus distance [mm], if fd<0 set from param')
     parser.add_argument('--f_stop',    '-fs', default=2.0, type=float, help='f stop (F) value, if fs<0 set from param')
     parser.add_argument('--coc_alpha', '-ca', default=1.0, type=float, help='parameter to define coc size')
+    parser.add_argument('--pixel_pitch', '-pp', default=0.010695187, type=float, help='pitch size of each pixel [mm]')
     parser.add_argument('--output_dir', '-o', default='./dp_dataset_sim/', type=str, help='Output directory')
     return parser
 
@@ -79,10 +80,10 @@ def get_camera_settings(set_name):
     return focal_len, f_stop, focus_dis
 
 
-def calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha):
+def calculate_lens_parameters(focal_len, f_stop, focus_dis, pixel_pitch, coc_alpha):
     lens_sensor_dis = focal_len * focus_dis / (focus_dis - focal_len)
     lens_dia = focal_len / f_stop
-    coc_scale = lens_sensor_dis * lens_dia / focus_dis * coc_alpha
+    coc_scale = lens_sensor_dis * lens_dia / focus_dis * coc_alpha / pixel_pitch
     coc_max = coc_scale
     return lens_sensor_dis, lens_dia, coc_scale, coc_max
 
@@ -94,7 +95,7 @@ def nearest_odd_below(num):
     int_num = int(num)
     return int_num - 1 if int_num % 2 == 0 else int_num - 2
 
-def compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia):
+def compute_defocus_map_layers(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia):
     # ぼけマップのレイヤーを格納するリストを初期化する
     coc_min_max_dis = []
 
@@ -276,9 +277,9 @@ def apply_radial_distortion_to_all(images, radial_dis_set):
     return distorted_images
 
 
-def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max, coc_alpha):
+def print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, pixel_pitch, coc_scale, coc_max, coc_alpha):
     print(f'set: {set_name}\nfocal_len: {focal_len}\nf_stop: {f_stop}\nfocus_dis: {focus_dis}\n'
-          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\ncoc_scale: {coc_scale}\ncoc_max: {coc_max}\ncoc_alpha: {coc_alpha}')
+          f'lens_sensor_dis: {lens_sensor_dis}\nlens_dia: {lens_dia}\npixel_pitch: {pixel_pitch}\ncoc_scale: {coc_scale}\ncoc_max: {coc_max}\ncoc_alpha: {coc_alpha}')
 
 def load_images(data_dir, dir_name):
     image_suffixes = ('.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG')
@@ -296,9 +297,9 @@ def load_images(data_dir, dir_name):
         # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
     elif 'Fixed' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
-        images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
-        # dis = 140
-        # images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
+        # images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
+        dis = 140
+        images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
         images_rgb = images_rgb * len(images_depth)
     elif 'ICCP' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
@@ -314,7 +315,7 @@ def load_images(data_dir, dir_name):
 
 
 
-def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop):
+def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop, pixel_pitch):
     # ディレクトリカウントを初期化する
     dir_count = 0
     # カメラ設定を取得する
@@ -324,11 +325,11 @@ def process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f
     if f_stop < 0:
         f_stop = f_stop_from_set
     # レンズパラメータを計算する
-    lens_sensor_dis, lens_dia, coc_scale, coc_max = calculate_lens_parameters(focal_len, f_stop, focus_dis, coc_alpha)
+    lens_sensor_dis, lens_dia, coc_scale, coc_max = calculate_lens_parameters(focal_len, f_stop, focus_dis, pixel_pitch, coc_alpha)
     # パラメータを表示する
-    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, coc_scale, coc_max, coc_alpha)
+    print_parameters(set_name, focal_len, f_stop, focus_dis, lens_sensor_dis, lens_dia, pixel_pitch, coc_scale, coc_max, coc_alpha)
     # ぼけマップのレイヤーを計算する
-    coc_min_max_dis = compute_defocus_map_layers_v2(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia)
+    coc_min_max_dis = compute_defocus_map_layers(depth_min, coc_max, threshold_dis, coc_scale, focus_dis, lens_sensor_dis, lens_dia)
     return coc_scale, coc_max, focus_dis, coc_min_max_dis
 
 def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, threshold_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength, radial_dis, output_dir, coc_min_max_dis, coc_scale, focus_dis):
@@ -339,8 +340,6 @@ def process_image_pair(img_rgb_path, img_depth_path, data_dir, max_scene_depth, 
     # 深度データの最小値を表示する
     print('depth average:', np.mean(depth[np.where(depth!=0)]))
     # cocレイヤーを処理する
-    # sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = process_coc_layers(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength)
-    # sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = process_coc_layers_blend(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength)
     sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l = process_coc_layers_v2(img_rgb, depth, coc_min_max_dis, matting_ratio, order, cut_off_factor, beta, smooth_strength, coc_scale, focus_dis)
     # サブ画像を組み合わせる
     sub_img_l, sub_img_r, sub_img_c, sub_depth_l = combine_sub_images(sub_imgs_l, sub_imgs_r, sub_imgs_c, depth_set, sub_depths_l)
@@ -380,13 +379,15 @@ def main():
     focus_dis = args.focus_dis
     # F値を設定する
     f_stop = args.f_stop
+    # Pixel pitchを設定する[mm]
+    pixel_pitch = 0.010695187
     # セット名を設定する
     # set_names = ['canon']
     set_names = ['fujinonF16']
 
     # セット名ごとに処理を行う
     for set_name in set_names:
-        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop)
+        coc_scale, coc_max, focus_dis, coc_min_max_dis = process_set_name(set_name, threshold_dis, coc_alpha, depth_min, focus_dis, f_stop, pixel_pitch)
         num_coc_layers = len(coc_min_max_dis)
 
         # シーケンス数とディレクトリ数を初期化する
