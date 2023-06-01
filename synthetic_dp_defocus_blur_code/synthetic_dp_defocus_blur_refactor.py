@@ -74,7 +74,7 @@ def get_butterworth_parameters():
 
 
 def get_camera_settings(set_name):
-    setting_num = 'set_' + str(set_name)
+    setting_num = 'sets/set_' + str(set_name)
     camera_setting = np.load(setting_num + '.npy')
     focal_len, f_stop, focus_dis = camera_setting
     return focal_len, f_stop, focus_dis
@@ -297,9 +297,9 @@ def load_images(data_dir, dir_name):
         # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
     elif 'Fixed' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
-        # images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
-        dis = 140
-        images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
+        images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
+        # dis = 140
+        # images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
         images_rgb = images_rgb * len(images_depth)
     elif 'ICCP' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
