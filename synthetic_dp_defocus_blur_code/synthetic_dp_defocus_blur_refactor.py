@@ -13,6 +13,7 @@ def create_arg_parser():
     parser.add_argument('--data_dir', '-d', default='./Chart/', type=str, help='Dataset directory')
     parser.add_argument('--radial_dis', action='store_true', default=False, help='to apply radial distortion or not')
     parser.add_argument('--add_noise', action='store_true', default=False, help='to add noise to depth')
+    parser.add_argument('--small', action='store_true', default=False, help='use small data')
     parser.add_argument('--focus_dis', '-fd', default=1250, type=float, help='focus distance [mm], if fd<0 set from param')
     parser.add_argument('--f_stop',    '-fs', default=2.0, type=float, help='f stop (F) value, if fs<0 set from param')
     parser.add_argument('--coc_alpha', '-ca', default=1.0, type=float, help='parameter to define coc size')
@@ -297,9 +298,11 @@ def load_images(data_dir, dir_name):
         # images_depth = [dir_name + '/' + 'ID-'+str(dis-1)+'_CZ-0_LZ-30_CA-0_LA--90_CD-'+str(dis)+'_CP--1_LD-60_LP--1_LR-0_RX-0_RY-0_RZ-0_gtD.png']
     elif 'Fixed' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
-        images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
-        # dis = 140
-        # images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png']
+        if args.small:
+            dis_list = [30, 50, 75, 100, 125, 150, 200, 300]
+            images_depth = [dir_name + '/depth/' + 'depth_'+str(dis)+'.png' for dis in dis_list]
+        else:
+            images_depth = load_images_from_directory(dir_name, 'depth', ('.png',))
         images_rgb = images_rgb * len(images_depth)
     elif 'ICCP' in data_dir:
         images_rgb = load_images_from_directory(dir_name, '', ('rgb.png',))
